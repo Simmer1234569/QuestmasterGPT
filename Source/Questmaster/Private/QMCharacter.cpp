@@ -1,21 +1,22 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Fill out your copyright notice in the Description page of Project Settings.
 
-#include "QuestmasterCharacter.h"
-#include "Camera/CameraComponent.h"
-#include "Components/CapsuleComponent.h"
-#include "Components/InputComponent.h"
-#include "GameFramework/CharacterMovementComponent.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/SpringArmComponent.h"
+
+#include "QMCharacter.h"
+
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "QMAttributesComponent.h"
+#include "QMMainUI.h"
+#include "Blueprint/UserWidget.h"
+#include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/SpringArmComponent.h"
 
-
-//////////////////////////////////////////////////////////////////////////
-// AQuestmasterCharacter
-
-AQuestmasterCharacter::AQuestmasterCharacter()
+AQMCharacter::AQMCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
+
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 		
@@ -32,7 +33,6 @@ AQuestmasterCharacter::AQuestmasterCharacter()
 	// instead of recompiling to adjust them
 	GetCharacterMovement()->JumpZVelocity = 700.f;
 	GetCharacterMovement()->AirControl = 0.35f;
-	GetCharacterMovement()->MaxWalkSpeed = 500.f;
 	GetCharacterMovement()->MinAnalogWalkSpeed = 20.f;
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 
@@ -47,20 +47,32 @@ AQuestmasterCharacter::AQuestmasterCharacter()
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName); // Attach the camera to the end of the boom and let the boom adjust to match the controller orientation
 	FollowCamera->bUsePawnControlRotation = false; // Camera does not rotate relative to arm
 
-	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
-	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+	AttributesComponent = CreateDefaultSubobject<UQMAttributesComponent>(TEXT("AttributesComponent"));
+
+	WalkSpeed = 300.f;
+	SprintSpeed = 600.f;
 }
 
-void AQuestmasterCharacter::BeginPlay()
+void AQMCharacter::BeginPlay()
 {
-	// Call the base class  
-	Super::BeginPlay();	
-	WalkSpeed = 300;
-	SprintSpeed = 600;
+	Super::BeginPlay();
+
+	if (ensureAlways(MainUIClass))
+	{
+		if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+		{
+			MainUI = CreateWidget<UQMMainUI>(PlayerController, MainUIClass);
+			if (MainUI)
+			{
+				MainUI->AddToViewport();
+			}
+		}
+	}
+
 	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
-	DisableSprint();
+	
 	//Add Input Mapping Context
-	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 		{
@@ -69,43 +81,13 @@ void AQuestmasterCharacter::BeginPlay()
 	}
 }
 
-//////////////////////////////////////////////////////////////////////////
-// Input
-
-void AQuestmasterCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
+void AQMCharacter::Tick(float DeltaTime)
 {
-	// Set up action bindings
-	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent)) {
-		
-		//Jumping
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Triggered, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
-
-		//Moving
-		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AQuestmasterCharacter::Move);
-
-		//Looking
-		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AQuestmasterCharacter::Look);
-
-		//Sprinting
-		InputComponent->BindAction("Sprint", IE_Pressed, this, &AQuestmasterCharacter::EnableSprint);
-		InputComponent->BindAction("Sprint", IE_Released, this, &AQuestmasterCharacter::DisableSprint);
-
-	}
-
-}
- 
-void AQuestmasterCharacter::EnableSprint()
-{
-	GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
-}
- 
-void AQuestmasterCharacter::DisableSprint()
-{
-	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+	Super::Tick(DeltaTime);
+	
 }
 
-void AQuestmasterCharacter::Move(const FInputActionValue& Value)
+void AQMCharacter::Move(const FInputActionValue& Value)
 {
 	// input is a Vector2D
 	FVector2D MovementVector = Value.Get<FVector2D>();
@@ -128,7 +110,7 @@ void AQuestmasterCharacter::Move(const FInputActionValue& Value)
 	}
 }
 
-void AQuestmasterCharacter::Look(const FInputActionValue& Value)
+void AQMCharacter::Look(const FInputActionValue& Value)
 {
 	// input is a Vector2D
 	FVector2D LookAxisVector = Value.Get<FVector2D>();
@@ -141,21 +123,50 @@ void AQuestmasterCharacter::Look(const FInputActionValue& Value)
 	}
 }
 
-void AQuestmasterCharacter::Regen()
+void AQMCharacter::EnableSprint()
 {
-	//Regen Health
-	if (Health < MaxHealth)
-	{
-		Health += HealthRegen;
-	}
-	//Regen Mana
-	if (Mana < MaxMana)
-	{
-		Mana += ManaRegen;
-	}
-	//Regen Stamina
-	if (Stamina < MaxStamina)
-	{
-		Stamina += StaminaRegen;
+	AttributesComponent->SetSprinting(true);
+	GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+}
+
+void AQMCharacter::DisableSprint()
+{
+	AttributesComponent->SetSprinting(false);
+	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+}
+
+void AQMCharacter::OnTired()
+{
+	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+}
+
+void AQMCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	// Set up action bindings
+	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent)) {
+		
+		//Jumping
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Triggered, this, &ACharacter::Jump);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+
+		//Moving
+		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AQMCharacter::Move);
+
+		//Looking
+		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AQMCharacter::Look);
+
+		//Sprinting
+		InputComponent->BindAction("Sprint", IE_Pressed, this, &AQMCharacter::EnableSprint);
+		InputComponent->BindAction("Sprint", IE_Released, this, &AQMCharacter::DisableSprint);
 	}
 }
+
+void AQMCharacter::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	AttributesComponent->OnTired.AddDynamic(this, &AQMCharacter::OnTired);
+}
+
